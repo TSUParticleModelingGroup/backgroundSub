@@ -4,6 +4,7 @@
 #include <ctype.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <ctime.h>
 
 // size of vector
 #define N 10
