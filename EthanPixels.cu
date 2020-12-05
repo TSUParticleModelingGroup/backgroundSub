@@ -6,17 +6,18 @@
 #include <stdlib.h>
 
 // size of vector
-#define N 10
-#define M 4
+#define M 4	// Number of frames
+#define N 10	// Number of pixels per frame
 
-#define BLOCK 128
+#define BLOCK 128  // Size of blocks, best if it is a power of 2.
 
 // Globals
-int *BlockOfFrames_CPU, *MeanFrame_CPU;
-float *MeanLogNormalFrame_CPU, *StdvLogNormalFrame_CPU;
-int *BlockOfFrames_GPU, *BlockOfLogNormalFrames_GPU;
-int *MeanFrame_GPU;
-float *MeanLogNormalFrame_GPU, *StdvLogNormalFrame_GPU;
+int *BlockOfFrames_CPU, *BlockOfFrames_GPU;
+float *MeanFrame_CPU, *MeanFrame_GPU;
+float *BlockOfLogNormalFrames_GPU;
+float *MeanLogNormalFrame_CPU, *MeanLogNormalFrame_GPU;
+float *StdvLogNormalFrame_CPU, *StdvLogNormalFrame_GPU;
+
 dim3 dimBlock, dimGrid;
 
 void AllocateMemory()
@@ -25,13 +26,13 @@ void AllocateMemory()
 	// and the standard deviation frame
 	BlockOfFrames_CPU = (int *)malloc(N*M*sizeof(int)); 
 	cudaMalloc((void**)&BlockOfFrames_GPU,N*M*sizeof(int));
-	cudaMalloc((void**)&BlockOfLogNormalFrames_GPU,N*M*sizeof(int));  
+	cudaMalloc((void**)&BlockOfLogNormalFrames_GPU,N*M*sizeof(float));  
 	
 	// Will hold the log normal frame and the standard deviation of the frames minus the log normal
-	MeanFrame_CPU = (int *)malloc(N*sizeof(int));
+	MeanFrame_CPU = (float *)malloc(N*sizeof(float));
 	MeanLogNormalFrame_CPU = (float *)malloc(N*sizeof(float));
 	StdvLogNormalFrame_CPU = (float *)malloc(N*sizeof(float));
-	cudaMalloc((void**)&MeanFrame_GPU,N*sizeof(int));
+	cudaMalloc((void**)&MeanFrame_GPU,N*sizeof(float));
 	cudaMalloc((void**)&MeanLogNormalFrame_GPU,N*sizeof(float));
 	cudaMalloc((void**)&StdvLogNormalFrame_GPU,N*sizeof(float));
 }
@@ -50,14 +51,14 @@ void loadPixels()
 	{
 		for(int j = 0; j < N; j++)
 		{
-			BlockOfFrames_CPU[j +i*N] = i*5;
+			BlockOfFrames_CPU[j +i*N] = i*j*5;
 		}
 	}
 	for(int j = 0; j < N; j++)
 	{
-		MeanFrame_CPU[j] = -1;
-		MeanLogNormalFrame_CPU[j] = -1;
-		StdvLogNormalFrame_CPU[j] = -1;
+		MeanFrame_CPU[j] = -1.0;
+		MeanLogNormalFrame_CPU[j] = -1.0;
+		StdvLogNormalFrame_CPU[j] = -1.0;
 	}
 }
 
@@ -77,65 +78,69 @@ void copyFramessUp()
 	cudaMemcpyAsync(BlockOfFrames_GPU, BlockOfFrames_CPU, N*M*sizeof(int), cudaMemcpyHostToDevice);
 }
 
-__global__ void creatingMeanPixelFrame(int *meanFrame, int *allFrames, int pixelsPerFrame, int frames)
+__global__ void creatingMeanPixelFrame(float *meanFrame, int *allFrames, int pixelsPerFrame, int frames)
 {
 	int pixel = threadIdx.x + blockIdx.x*blockDim.x;
 	if(pixel < pixelsPerFrame)
 	{
-		int sum = 0;
+		float sum = 0.0;
 		for(int i = 0; i < frames; i++)
 		{
 			sum += allFrames[pixel + pixelsPerFrame*i];
 		}
-		meanFrame[pixel] = sum/frames;
+		meanFrame[pixel] = sum/(float)frames;
 	}
 }
 
-__global__ void creatingLogNormalFrames(int *meanFrame, int *allFrames, int *allFramesLogNormal, int pixelsPerFrame, int frames)
+__global__ void creatingLogNormalFrames(float *meanFrame, int *allFrames, float *allFramesLogNormal, int pixelsPerFrame, int frames)
 {
 	int pixel = threadIdx.x + blockIdx.x*blockDim.x;
 	if(pixel < pixelsPerFrame)
 	{
 		for(int i = 0; i < frames; i++)
 		{
-			allFramesLogNormal[pixel] = allFrames[pixel] -  meanFrame[pixel];
+			allFramesLogNormal[pixel] = (float)allFrames[pixel] -  meanFrame[pixel];
 			allFramesLogNormal[pixel] = abs(allFramesLogNormal[pixel]);
-			allFramesLogNormal[pixel] = __log(allFramesLogNormal[pixel]);
+			// WHat do you do if this is zero???
+			if(allFramesLogNormal[pixel] == 0.0) allFramesLogNormal[pixel] = 0.000001;
+			allFramesLogNormal[pixel] = logf(allFramesLogNormal[pixel]);
 		}
 	}
 }
 
-__global__ void creatingMeanLogNormalFrame(float *meanlogNormalFrame, int *allFramesLogNormal, int pixelsPerFrame, int frames)
+__global__ void creatingMeanLogNormalFrame(float *meanlogNormalFrame, float *allFramesLogNormal, int pixelsPerFrame, int frames)
 {
 	int pixel = threadIdx.x + blockIdx.x*blockDim.x;
 	if(pixel < pixelsPerFrame)
 	{
-		int sum = 0;
+		float sum = 0.0;
 		for(int i = 0; i < frames; i++)
 		{
 			sum += allFramesLogNormal[pixel + pixelsPerFrame*i];
 		}
-		meanlogNormalFrame[pixel] = sum/frames;
+		meanlogNormalFrame[pixel] = sum/(float)frames;
 	}
 }
 
-__global__ void creatingStdvLogNormalFrame(float *stdvLogNormalFrame, float *meanLogNormalFrame, int *allFramesLogNormal, int pixelsPerFrame, int frames)
+__global__ void creatingStdvLogNormalFrame(float *stdvLogNormalFrame, float *meanLogNormalFrame, float *allFramesLogNormal, int pixelsPerFrame, int frames)
 {
 	int pixel = threadIdx.x + blockIdx.x*blockDim.x;
+	float temp;
 	if(pixel < pixelsPerFrame)
 	{
-		int sum = 0;
+		float sum = 0.0;
 		for(int i = 0; i < frames; i++)
 		{
-			sum += allFramesLogNormal[pixel + pixelsPerFrame*i] - meanLogNormalFrame[pixel];
+			temp = allFramesLogNormal[pixel + pixelsPerFrame*i] - meanLogNormalFrame[pixel];
+			sum += temp*temp;
 		}
-		stdvLogNormalFrame[pixel] = __sqrt((sum*sum)/(frames-1));
+		stdvLogNormalFrame[pixel] = sqrtf((sum*sum)/(float)(frames-1));
 	}
 }
 
 void copyFramesDown()
 {
-	cudaMemcpyAsync(MeanFrame_CPU, MeanFrame_GPU, N*sizeof(int), cudaMemcpyDeviceToHost);
+	cudaMemcpyAsync(MeanFrame_CPU, MeanFrame_GPU, N*sizeof(float), cudaMemcpyDeviceToHost);
 	cudaMemcpyAsync(MeanLogNormalFrame_CPU, MeanLogNormalFrame_GPU, N*sizeof(float), cudaMemcpyDeviceToHost);
 	cudaMemcpyAsync(StdvLogNormalFrame_CPU, StdvLogNormalFrame_GPU, N*sizeof(float), cudaMemcpyDeviceToHost);
 }
@@ -144,7 +149,7 @@ void stats()
 {
 	for(int i = 0; i < N; i++)
 	{
-		printf("MeanFrame_CPU[%d] = %d MeanLogNormalFrame_CPU[%d] = %f StdvLogNormalFrame_CPU[%d] = %f\n", i, MeanFrame_CPU[i], i, MeanLogNormalFrame_CPU[i], i, StdvLogNormalFrame_CPU[i]);
+		printf("MeanFrame_CPU[%d] = %f MeanLogNormalFrame_CPU[%d] = %f StdvLogNormalFrame_CPU[%d] = %f\n", i, MeanFrame_CPU[i], i, MeanLogNormalFrame_CPU[i], i, StdvLogNormalFrame_CPU[i]);
 	}
 }
 
