@@ -99,11 +99,11 @@ __global__ void creatingLogNormalFrames(float *meanFrame, int *allFrames, float 
 	{
 		for(int i = 0; i < frames; i++)
 		{
-			allFramesLogNormal[pixel] = (float)allFrames[pixel] -  meanFrame[pixel];
-			allFramesLogNormal[pixel] = abs(allFramesLogNormal[pixel]);
+			allFramesLogNormal[pixel + pixelsPerFrame*i] = (float)allFrames[pixel + pixelsPerFrame*i] -  meanFrame[pixel];
+			allFramesLogNormal[pixel + pixelsPerFrame*i] = abs(allFramesLogNormal[pixel + pixelsPerFrame*i]);
 			// WHat do you do if this is zero???
-			if(allFramesLogNormal[pixel] == 0.0) allFramesLogNormal[pixel] = 0.000001;
-			allFramesLogNormal[pixel] = logf(allFramesLogNormal[pixel]);
+			if(allFramesLogNormal[pixel + pixelsPerFrame*i] == 0.0) allFramesLogNormal[pixel + pixelsPerFrame*i] = 0.000001;
+			allFramesLogNormal[pixel + pixelsPerFrame*i] = logf(allFramesLogNormal[pixel + pixelsPerFrame*i]);
 		}
 	}
 }
